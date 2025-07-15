@@ -1,0 +1,611 @@
+---
+title: '131 Project: Student Depression'
+author: "Sofia Kruse Robertson"
+date: "2025-02-24"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+Student depression is a major issue, and although we experience it in the US pretty severely, it is a major issue in plenty of countries around the world. In a review of studies sampling college student from several different countries it was found that "depression was present in nearly one-third of the total students studied with a weighted mean prevalence of 30.6% (95% CI, 30.2–31.1)" (Ibrahim et all, 2013). Another study states that "Depression is one of the four major diseases in the world and is the most common cause of disability from diseases" (Sarokhani et al, 2013). Beyond just schooling, there are plenty of other factors that can play a role in the mental health of students. College students are in a "transitory period in which they are going from adolescence to adulthood and can be one of the most stressful times in a person’s life" (Sarokhani et al, 2013). The transition alone can be overwhelming and familial support, financial status, job satisfaction, family history, as well as many more factors can all be stressors as one enters adulthood and must learn how to care for themselves and juggle all social expectations.
+
+Using a data set sampling students in India, our goal is to see what factors have the biggest effect on student depression and whether or not we can predict student depression with some degree of accuracy.
+
+
+# Methods
+
+## Description of Data
+
+The data is from a sample of students in India and was found on Kaggle. The owner of the data set is Shodolamu Opeyemi and it was last updated in December of 2024. The expected frequency for updating is never. There are 27,901 rows. The data set contains 18 columns, including a unique identifier ID Unique_id, Gender, Age, City, Profession, rating of Academic Pressure, rating of Work Pressure, CGPA (10-point), rating of Study Satisfaction, rating of Job Satisfaction, Sleep Duration (categorical variable with 5 levels; "5-6 hours", "7-8 hours", "Less than 5 hours", "More than 8 hours", and "Others"), Dietary Habits (measured in levels of "Healthy", "Moderate", or "Unhealthy"), Degree, Suicidal Thoughts (Yes/No), Work/Study Hours in Hours, rating of Financial Stress, Family History of Depression (Yes/No), and the target variable: Depression (binary). The ratings are on a integer scale of 1-5. 
+
+After cleaning the data, we will use various visualization tactics to explore the data and its variables such as box plots and histograms. We will also use unsupervised learning methods like hierarchical clustering and PCA to find any possible groups or trends in the data, and identify potential influential predictors.
+ 
+For our analysis, we will use various modeling techniques such as Logistic, Random Forest, and boosting to find significant predictors and test prediction accuracy. We will use test error rate and AUC to determine model accuracy.
+
+
+# Exploratory Analysis
+
+```{r, message=FALSE, warning = FALSE}
+library(tidyverse)
+library(randomForest)
+library(cluster)
+library(dbplyr)
+library(dendextend)
+library(knitr)
+library(ROCR)
+library(ISLR)
+
+dep <- read_csv("Student Depression Dataset.csv")
+dep <- dep %>%
+  rename(academic_pressure = `Academic Pressure`,
+         study_satisfaction = `Study Satisfaction`,
+         sleep_duration = `Sleep Duration`,
+         dietary_habits = `Dietary Habits`,
+         suicidal_thoughts = `Have you ever had suicidal thoughts ?`,
+         work_study_hours = `Work/Study Hours`,
+         financial_stress = `Financial Stress`,
+         family_history = `Family History of Mental Illness`,
+         job_satisfaction = `Job Satisfaction`,
+         work_pressure = `Work Pressure`)
+
+dep$family_history <- as.factor(dep$family_history)
+dep$suicidal_thoughts <- as.factor(dep$suicidal_thoughts)
+dep$sleep_duration <- as.factor(dep$sleep_duration)
+dep$dietary_habits <- as.factor(dep$dietary_habits)
+dep$Profession <- as.factor(dep$Profession)
+dep$Gender <- as.factor(dep$Gender)
+dep$City <- as.factor(dep$City)
+dep$Degree <- as.factor(dep$Degree)
+dep$Depression <- as.factor(dep$Depression)
+```
+
+
+
+
+## Cleaning
+
+```{r}
+#colSums(is.na(dep))  # Check missing values in all columns
+dep <- dep %>% drop_na()
+#colSums(is.na(dep))
+```
+We had 3 missing values in the variable Financial_Stress, which we chose to remove the rows due to the there being a minimal amount and it not having too much influence on the data set.
+
+
+## Exploration
+
+
+
+```{r, fig.show= "hold", out.width="50%", warning = FALSE, message = FALSE}
+library(ggplot2)
+
+ggplot(data = dep, aes(y = work_study_hours, x = sleep_duration)) + 
+  geom_boxplot(fill = "pink") +
+  ggtitle("Work Study Hours by Sleep Amount")
+
+ggplot(data = dep, aes(y = Profession, x = Age)) + 
+  geom_boxplot(fill = "lightblue") +
+  ggtitle("Profession by Age")
+
+profession_n <- dep %>%
+  group_by(Profession) %>%
+  summarise(n = sum(!is.na(Profession)))
+profession_age_mean <- dep %>%
+  group_by(Profession) %>%
+  summarise(n = mean(Age), a = median(Age))
+
+sum_stat <- data.frame(c(prof = profession_n, age = profession_age_mean))
+sum_stat <- sum_stat[-1]
+colnames(sum_stat) <- c("Count", "Profession", "Mean Age", "Median Age")
+
+kable(sum_stat, caption = "Profession Counts and Mean and Median Age")
+```
+
+Here we see that there is a pretty steady mean for work/study hours per sleep level with the average hours of work/study being around 7.5 with the full range being from 0 to over 12 hours in the 'Work Study Hours by Sleep Amount" chart. We also see that there are some possible outliers for student age in the 'Profession by Age' chart. There are other professions listed as well, which may be concurrent careers while in school or the field they will be entering, but they are minimal in comparison to the bulk of our data being chiefly identified as students. Our mean age for students is 25.8 and our median is 25, and we find that our possible outliers do not move our mean too much.
+
+```{r, fig.show= "hold", out.width="50%", warning = FALSE, message = FALSE}
+ggplot(data = dep, aes(y = CGPA, x = sleep_duration)) + 
+  geom_boxplot(fill = "lavender") + ggtitle("CGPA by Sleep Duration")
+
+
+
+ggplot(data = dep, aes(y = financial_stress, x = suicidal_thoughts)) + 
+  geom_boxplot(fill = "lightyellow") + ggtitle("Financial Stress by Suicidal Thoughts")
+``` 
+
+In the chart 'CGPA by Sleep Duration' we find that the average for each level of sleep are also very similar with it being just above 7.5 with possible outliers for each level besides "others" at around 0 CGPA. We do find that the mean financial stress level grouped by whether participants have suicidal thoughts is a full point higher at a 4 versus a 3 in the 'Financial Stress by Suicidal Thoughts' chart.
+
+
+
+```{r, fig.show= "hold", out.width="50%", warning = FALSE, message = FALSE}
+ggplot(data = dep, aes(x=academic_pressure, colour = "hotpink")) +
+  geom_histogram(aes(y = after_stat(density)), binwidth = .25, fill = "hotpink")  + 
+  ggtitle("Histogram of Academic Pressure") +
+  xlab("Measure of Academic Pressure") +
+  ylab("Probability Density")
+
+
+ggplot(data = dep, aes(y = academic_pressure, x = Depression)) + geom_boxplot(fill = "lightgreen") +
+  ggtitle("Academic Pressure by Depression")
+```
+
+From our 'Histogram of Academic Pressure', we see the levels of 3, 5, and 4 are our most probable levels, both of which are relatively high. In our 'Academic Pressure by Depression' chart, we see that the average level of academic pressure is two levels higher for people with depression compared to those without. Academic pressure may be a good predictor of depression.
+
+
+```{r}
+dep.sample.reg <- dep %>%
+  select(Depression,
+         academic_pressure,
+         study_satisfaction,
+         work_study_hours,
+         financial_stress,
+         CGPA,
+         Age)
+
+dep.subset <- dep %>%
+  select(Depression,
+         academic_pressure,
+         study_satisfaction,
+         work_study_hours,
+         financial_stress,
+         CGPA,
+         sleep_duration,
+         dietary_habits,
+         suicidal_thoughts,
+         family_history,
+         Age)
+
+```
+
+Our variables of interest are Depression as our response, and academic_pressure, study_satisfaction, work_study_hours, financial_stress, job_satisfaction, CGPA, sleep_duration, dietary_habits, suicidal_thoughts, family_history, Age as possible predictors. We exclude Work Pressure due to the large volume of 0s with the mean being `r mean(dep$work_pressure)` and median being `r median(dep$work_pressure)`.
+
+### Hierarchical Clustering
+
+```{r, fig.show= "hold", out.width="50%", warning = FALSE, message = FALSE}
+set.seed(251703) # For reproducibility
+dep.subset.small <- dep.subset[sample(nrow(dep.subset), 15000), ]
+
+d_dist <- daisy(dep.subset.small[-1], metric = "gower",
+                type = list(symm = c("suicidal_thoughts", 
+                                     "family_history"),
+                            nominal = c("sleep_duration", "dietary_habits")))
+
+
+hclust_model <- hclust(d_dist, method = "ward.D2")
+
+# clusters2 <- cutree(hclust_model, k = 2)
+# table(clusters2, dep.subset.small$Depression)
+# 
+# clusters3 <- cutree(hclust_model, k = 3)
+# table(clusters3, dep.subset.small$Depression)
+# 
+# clusters5 <- cutree(hclust_model, k = 5)
+# table(clusters5, dep.subset.small$Depression)
+
+dep.subset.small$clusters6 <- cutree(hclust_model, k = 6)
+table_clust <- table(dep.subset.small$clusters6, dep.subset.small$Depression)
+kable(table_clust, caption = "6 Cluster Division of Depression")
+
+table_clust_2 <- table(dep.subset.small$clusters6, dep.subset.small$suicidal_thoughts)
+kable(table_clust_2, caption = "6 Cluster Division of Suicidal Thoughts")
+
+table_clust_3 <- table(dep.subset.small$clusters6, dep.subset.small$dietary_habits)
+kable(table_clust_3, caption = "6 Cluster Division of Dietary Habits")
+
+table_clust_4 <- table(dep.subset.small$clusters6, dep.subset.small$academic_pressure)
+kable(table_clust_4, caption = "6 Cluster Division of Academic Pressure")
+
+table_clust_5 <- table(dep.subset.small$clusters6, dep.subset.small$financial_stress)
+kable(table_clust_5, caption = "6 Cluster Division of Financial Stress")
+
+table_clust_6 <- table(dep.subset.small$clusters6, dep.subset.small$sleep_duration)
+kable(table_clust_6, caption = "6 Cluster Division of Sleep Duration")
+
+table_clust_9 <- table(dep.subset.small$clusters6, dep.subset.small$family_history)
+kable(table_clust_9, caption = "6 Cluster Division of Family History")
+```
+
+We see from the above tables that suicidal thoughts is one of, if not the most, dominant predictor in depression clusters. Family history sees some clusters evenly distributed and others separated by a history or not, which indicates that those student may have additional risk in developing depression, but we also see groups where depression occurs without a family history, meaning that although it may increase risk, environmental and life-style factors may play a bigger role. In contrast academic stress seems to be more evenly dispersed and while it may still play a role, it probably does not differentiate clusters as strongly. Dietary habits also emerges as another more dominant factor in determining the clusters, indicating to a possible link between nutrition and mental health. Whereas financial stress and sleep duration appear to be more evenly distributed across clusters, which might imply that although they contribute, they do not distinctly separate individuals into risk groups. Other factors such as age and CGPA may also be contributing factors, but are separating factors for the clustering.
+
+```{r, fig.show= "hold", out.width="50%", warning = FALSE, message = FALSE}
+ggplot(dep.subset.small, aes(x = factor(clusters6), y = academic_pressure, 
+                             fill = suicidal_thoughts)) +
+  geom_boxplot() +
+  theme_minimal() +
+  labs(title = "Academic Pressure by Cluster with Suicidal Thoughts", 
+       x = "Cluster", y = "Academic Pressure")
+
+ggplot(dep.subset.small, aes(x = factor(clusters6), y = financial_stress, 
+                             fill = dietary_habits)) +
+  geom_boxplot() +
+  theme_minimal() +
+  labs(title = "Financial Stress by Cluster with Dietary Habits", x = "Cluster",
+       y = "Financial Stress")
+```
+
+In 'Academic Pressure by Cluster with Suicidal Thoughts', we see the way the clusters are grouped entirely on whether there were suicidal thoughts present, and we see that the clusters with the lowest range were the ones that did not experience suicidal thoughts with their academic pressure mean being of the lowest. 
+
+In 'Financial Stress by Cluster with Dietary Habits', there is clear division in the first three clusters of each of the major levels of dietary habits with the third being 'Healthy' but also one of the clusters that suicidal thoughts as a 'Yes', yet we see that its mean financial stress is one of the lower of the three with one of the smallest range. We see a lot more diversity in diet in clusters 4 and 5 which both were all 'No' for suicidal thoughts and have the second lowest mean financial stress levels of the chart.
+
+
+
+
+```{r, fig.height = 9}
+# expand to whole page
+dend1 =as.dendrogram(hclust_model)
+dend1 =color_branches(dend1, k=6)
+dend1 =color_labels(dend1, k=6)
+dend1 =set(dend1, "labels_cex", 0.35)
+dend1 <- rotate(dend1, order = order.dendrogram(dend1)) 
+labels_yes_no <- ifelse(dep.subset.small$Depression == 1, "Yes", "No")
+dend1 =set_labels(dend1, labels=labels_yes_no)
+plot(dend1, horiz=T, main = "Dendrogram colored by Six Clusters")
+```
+We have our dendrogram grouped into 6 clusters with the largest distinct vertical distance (although our dendrogram is currently turned horizontal for visibility purposes). These groups look to be relativity similar in size. The first major split is most likely where we see suicidal thoughts split.
+
+### PCA
+
+```{r, fig.show= "hold", out.width="50%", warning = FALSE, message = FALSE}
+## pca
+set.seed(251703)
+pca_model <- prcomp(dep.sample.reg[-1],scale =TRUE, center = TRUE)
+pr.var = pca_model$sdev^2
+#pr.var
+pve = pr.var/sum(pr.var)
+#pve
+
+plot(pve, xlab="Principal Component",ylab="Proportion of Variance Explained ", 
+     ylim=c(0,1), type = 'b', main = "PCA Variance")
+
+plot(cumsum(pve), xlab="Principal Component",
+     ylab="Cumulative Proportion of Variance Explained ", ylim=c(0,1), 
+     type = 'b', main = "Cumpulative PCA Variance")
+abline(a = .9, b = 0, col = "red")
+
+```
+
+In our Principal Component Analysis (PCA), we have used a quantitative subset of our variables of interest: academic_pressure, study_satisfaction, work_study_hours, financial_stress, CGPA, Age. We needed to use a subset due to the limitations of PCA in handling qualitative date and its reliance on variance and Euclidean Distance. Our hierarchical clustering analysis previously identified both categorical and numerical factors that contribute to depression risk, finding some of the categorical variables as the most distinguishing. However, with PCA, we aimed to explore patterns within the quantitative variables, ensuring a complementary perspective to insure we cover all aspects of the data. We find that the total 6 PCA's explain more than 90% of the variation together, confirming that academic and financial stress, study habits, and age also strongly contribute to differentiating individuals within the dataset.
+
+```{r}
+pc1_load <- pca_model$rotation[,1] 
+sorted_pcd1 <- sort(abs(pc1_load), decreasing = T)
+kable(sorted_pcd1, caption = "PC1 Loadings")
+```
+
+We see in PC1 that academic pressure and financial stress are the biggest contributors.
+
+```{r}
+pc2_load <- pca_model$rotation[,2] 
+sorted_pcd2 <- sort(abs(pc2_load), decreasing = T)
+kable(sorted_pcd2, caption = "PC2 Loadings")
+```
+
+In PC2, the biggest drivers are CGPA and study satisfaction.
+
+
+
+```{r}
+biplot(pca_model, scale=0,xlim = c(-2,3))
+```
+
+Here we see our above observations about PC1 and PC2 in graphical form, the arrows showing which predictors are most prominent for each PC. We see that CGPA might have a negative correlation with study satisfaction, indicating that a high GPA does not mean a higher satisfaction in ones studies.
+
+
+
+```{r}
+rainbow_colors <- rainbow(2)
+plot_colors <- rainbow_colors[as.factor(dep.sample.reg$Depression)]
+pcd <- pca_model$x[,1:2]
+
+plot(pcd, col = plot_colors, main = "First Two Principal Component Dimensions", cex = .3)
+text(pcd, col = plot_colors, labels = dep.sample.reg$Depression, cex = .4)
+legend("topright", legend = c("No", "Yes"), col = rainbow_colors, pch = 19, title = "Depression")
+```
+
+We see the data kinda grouped into two distinct sides on the PC1 axis with 'No' for depression being in red and 'Yes' being in blue. We do not see as much of a separation with PC2 indicating that CGPA and study satisfaction may not be the best predictors for depression and that a focus on academic pressure and financial stress is better.
+
+
+
+
+```{r}
+rainbow_colors <- rainbow(7)
+plot_colors <- rainbow_colors[as.factor(dep.sample.reg$Depression)]
+pcd <- pca_model$x[,c(1,3)]
+
+plot(pcd, col = plot_colors, main = "First and Third Principal Component Dimensions", cex = .3)
+text(pcd, col = plot_colors, labels = dep.sample.reg$Depression, cex = .4)
+legend("topright", legend = c("No", "Yes"), col = rainbow_colors, pch = 19, title = "Depression")
+```
+
+We see similar results graphing PC1 against PC3, where the most prominent factors in PC3 are Age and CGPA. Meanwhile, academic pressure and financial stress continue to play a significant role, reinforcing their importance across multiple principal components.
+
+
+# Models
+
+## Logistic Model
+
+```{r}
+set.seed(251703)
+train.indice = sample(nrow(dep.subset), 0.8 * nrow(dep.subset)) # 80% to training
+train = dep.subset[train.indice, ]
+test = dep.subset[-train.indice, ]
+
+```
+
+We split the data set into a training and test set with 80% of the data in the training set.
+
+```{r}
+model_log <- glm(Depression ~.,
+                data = train, family = "binomial")
+
+modelsuml <- summary(model_log)
+
+kable(modelsuml$coefficients, caption = "Coefficients for Logistic Model")
+kable(modelsuml[["aic"]], caption = "AIC for Logistic Model")
+
+```
+
+These are our coefficients and AIC using logistic regression with our variables of interest, all of which are statistically significant at a Bonferroni-adjusted significance level of $\frac{0.05}{3}$ = `r 0.05/15`, except for a few levels--mainly 'Others' for dietary habits, 'Others' for sleep duration, and '7-8 hours' for sleep duration.
+
+```{r}
+set.seed(251703)
+# error rates
+prob_training <- predict(model_log, type="response") 
+
+prob_test <- predict(model_log, newdata = test, type = "response")
+
+calc_error_rate <- function(predicted.value, true.value){
+return(mean(true.value != predicted.value))
+}
+
+
+train = train %>%
+  mutate(pred_dep =as.factor(ifelse(prob_training<=0.5, 0, 1)))
+
+# Add predicted binary to test data
+test = test %>%
+  mutate(pred_dep =as.factor(ifelse(prob_test<=0.5, 0, 1)))
+
+# Error rate for train
+train_rate <- calc_error_rate(train$pred_dep, train$Depression)
+# Error rate for test
+test_rate <- calc_error_rate(test$pred_dep, test$Depression)
+
+
+
+```
+
+Here we have a training error rate of `r train_rate` and a test error rate of `r test_rate`. We find that our test error rate is very close to our training error rate, which could be due to our training/test split.
+
+#### Cross Validation
+
+```{r}
+do.chunk <- function(chunkid, folddef, dat, ...){
+  # Get training index
+  train = (folddef!=chunkid)
+  # Get training set and validation set
+  dep.train = dep.subset[train, ]
+  dep.val = dep.subset[-train, ]
+  # Train logistic regression model on training data
+  fit.train = glm(Depression ~ ., family = binomial, data = dep.train)
+  # get predicted value on the validation set
+  pred.val = predict(fit.train, newdata = dep.val, type = "response")
+  pred.val = ifelse(pred.val > .5, 1,0)
+  data.frame(fold = chunkid,
+  val.error = mean(pred.val != dep.val$Depression))
+}
+
+nfold = 10
+
+
+folds =cut(1:nrow(dep.subset), breaks=nfold, labels=FALSE) %>% sample()
+#folds
+error.folds = NULL
+
+for(j in seq(10)){
+  tmp =do.chunk(chunkid=j, folddef=folds, dep.subset) 
+  
+  error.folds =rbind(error.folds, tmp)# combine results
+}
+
+test_error_rate_cv <- mean(error.folds$val.error)
+# our test error rate
+kable(error.folds, caption = "Cross Validation for Test Error Rate on Logistic Model")
+```
+We validate our test error rate with Cross Validation and a overall value of `r test_error_rate_cv`.
+
+
+#### AUC
+
+```{r}
+set.seed(251703)
+pred <- prediction(prob_test, test$Depression)
+perf <- performance(pred, measure = "tpr", x.measure="fpr")
+plot(perf, col=2, lwd=3, main="ROC curve")
+abline(0,1)
+auc =performance(pred, "auc")@y.values
+kable(auc, caption = "AUC for Logistic Model")
+```
+
+We calculate an AUC of `r auc`, which means that our logistic model is very accurate and has good reliability in its predictions.
+
+
+## Decision Tree
+
+```{r, warning=FALSE, message = FALSE}
+set.seed(251703)
+library(tree)
+library(maptree)
+
+dep.subset.tree <- dep.subset %>%
+  mutate(Depression = factor(ifelse(Depression == 1, "Yes", "No"), levels = c("Yes", "No")))
+
+
+## reg tree with pruning
+train_index <- sample(1:nrow(dep.subset.tree), 0.8 * nrow(dep.subset.tree))  # 80% data for training
+train_data <- dep.subset.tree[train_index, ]
+test_data <- dep.subset.tree[-train_index, ]
+
+tree.dep =tree(Depression~., data = train_data)
+#draw.tree(tree.dep, nodeinfo=TRUE, cex = 0.4)
+cv =cv.tree(tree.dep, FUN=prune.misclass, K=5)
+
+#cv$size
+#cv$dev
+
+best_size =min(cv$size[cv$dev== min(cv$dev)])
+#best_size
+
+pt.cv =prune.misclass(tree.dep, best=best_size)
+draw.tree(pt.cv, nodeinfo=TRUE, cex = 0.4)
+
+
+
+```
+
+We attempt a single tree but find that it excludes possible important predictors that may add value to the model. Additionally, the tree lacks the depth and complexity needed for accurate predictions. To improve performance, we transition to Random Forest and Boosting, which enhance model robustness by reducing overfitting and/or reducing excess variance and also incorporate a broader set of predictors.
+
+
+#### Random Forest Model
+
+```{r}
+set.seed(251703)
+rf_model <- randomForest(Depression ~ .,
+                         ntree = 1000, data = train_data,
+                         mtry = sqrt(10),
+                         importance = TRUE)
+rf_model
+
+```
+
+Here we have a Out of Bag estimate of error rate of 16%, we have $\sqrt10$ variables considered at each split, and 1000 trees were used. Our OOB is pretty good for prediction accuracy on our training set.
+
+```{r}
+importance_df <- data.frame(importance(rf_model, class = TRUE))
+ordered_imp_df <- importance_df[order(-importance_df$MeanDecreaseGini), ]
+kable(ordered_imp_df, caption = "Predictor Importance Ordered by Mean Decrease Gini")
+```
+
+Here we see that from our Random Forest model, using the Mean Decrease Gini, we have suicidal thoughts, academic pressure, CGPA, age, and financial stress as our 5 biggest predictors. We see that family history has the lowest Mean Decrease Gini score, meaning depression may be more affected by environment than genetics.
+
+#### Boosted Model
+
+```{r, message = FALSE}
+set.seed(251703)
+library(gbm)
+test_data$Depression <- as.factor(test_data$Depression)
+
+train2 <- train_data
+
+train2$Depression <- ifelse(train2$Depression == "Yes", 1, 0)
+
+boost.tree <- gbm(Depression~., data = train2, distribution = "bernoulli", 
+                  n.trees = 1000, shrinkage = .01)
+
+bs <- summary(boost.tree)
+kable(bs, caption = "Boosted Tree Model")
+```
+
+We've used 1000 trees to fit our boosted model, finding its most important variables are suicidal thoughts, academic pressure, financial stress, age, and dietary habits; the first 4 also in the top five predictors that we listed earlier for our Random Forest model. 
+
+#### Boosted vs. Random Forest Models
+
+##### Test Error Rate
+
+```{r, message = FALSE}
+set.seed(251703)
+test2 <- test_data
+tree.pred.b1 <- predict(boost.tree, newdata = test2, type="response")
+tree.pred.b2 <- ifelse(tree.pred.b1<.5, "No", "Yes")
+
+
+#print("Boost Model table")
+tab_b <- table(test_data$Depression, tree.pred.b2)
+# more bias
+
+
+tree.pred.f1 <- predict(rf_model, newdata = test_data, type="prob")
+tree.pred.f2 <- ifelse(tree.pred.f1[,"Yes"]>=.5, "Yes", "No") 
+
+#print("Random Forest table")
+tab_f <- table(test_data$Depression, tree.pred.f2)
+# more variance
+
+# model underfit or overfit?
+kable(tab_b, caption = "Boosting Confusion Matrix")
+kable(tab_f, caption = "Random Tree Confusion Matrix")
+
+boost_misclassified <- 327 + 565
+boost_total <- 327 + 2894 + 1794 + 565
+boost_error_rate <- boost_misclassified / boost_total
+#cat("Boosting Test Error Rate:", boost_error_rate, "\n")
+
+rf_misclassified <- 370 + 526
+rf_total <- 370 + 2851 + 1833 + 526
+rf_error_rate <- rf_misclassified / rf_total
+#cat("Random Forest Test Error Rate:", rf_error_rate, "\n")
+
+
+```
+
+Our Booting model test error rate is `r boost_error_rate` and our Random Forest test error rate is slightly larger at `r rf_error_rate` indicating that our boosted model performs marginally better on the test set than our Random Forest model. We may have a slightly elevated level of variance in our Random Forest model.
+
+##### AUCs
+
+```{r}
+pred1 <- prediction(tree.pred.b1, test_data$Depression)
+perf1 <- performance(pred1, measure = "tpr", x.measure="fpr")
+plot(perf1, col=2, lwd=3, main="ROC curve")
+abline(0,1)
+auc1 =performance(pred1, "auc")@y.values
+kable(auc1, caption = "AUC for Boosted Model")
+```
+
+For our boosted model we have an AUC of `r auc1`, which is still lower than our logistic AUC.
+
+```{r}
+tree.pred.f3 <- predict(rf_model, newdata = test_data, type="prob")[, "Yes"]  
+pred2 <- prediction(tree.pred.f3, test_data$Depression)
+perf2 <- performance(pred2, measure = "tpr", x.measure="fpr")
+plot(perf2, col=2, lwd=3, main="ROC curve")
+abline(0,1)
+auc2 =performance(pred2, "auc")@y.values
+kable(auc2, caption = "AUC for Random Forest Model")
+```
+
+For our Random Forest model, we have an AUC of `r auc2` which is very slightly worse than our Boosted model at `r auc1`.
+
+
+```{r, results='asis', echo=FALSE}
+cat("\\newpage")
+```
+
+# Conclusion
+
+In conclusion, many factors can contribute to depression in students, most of them environmental and self-care related in contrast to genetics. We first cleaned our data and then used several types of visualization, Hierarchical Clustering using Gower's Distance for a mix on categorical and quantitative variables, and then PCA on our quantitative variables of interest. From there, we used several different types of modeling to determine the best for prediction of depression in student, the first being a Logistic model, and then a single tree, from which we branched to Random Forest and Boosting. Our goal was to find significant factors in predicting depression in students and to be able to do such predictions with some form of accuracy, for which we achieved.
+
+From our exploratory analysis and modeling, we were able to determine that suicidal thoughts is one of the biggest indicators of depression in students. Other stressors like academic pressure and financial stress are also large predictors of depression as seen in our decision trees and PCA analysis. We find from our clustering and Boosted model that a moderate to unhealthy diet can also be a predictor of depression. There are several other smaller factors that play a role as well, such as hours of sleep, CGPA, age, study satisfaction, and time spent on work/study. We also determined that family history of depression is not a strong predictor of depression and other environmental and health factor as we have seen play a larger role. Overall, suicidal thoughts, academic pressure, and financial stress were the most influential predictors across all models.
+
+We find that our Logistic Model is the best model for predicting student depression, although the Boosted model was very close and the Random Forest Model was just behind the Boosted model. With a test error rate of `r test_rate`, a cross-validation test error rate of `r test_error_rate_cv`, and an AUC of `r auc`, our Logistic model had the lowest test error rate and the highest AUC.  While the Boosted model performed similarly, and the Random Forest model followed closely behind, the Logistic model's balance of interpretability and accuracy makes it the preferred choice. 
+
+For the future, we may attempt to fine-tune both our Random Forest model and Boosted model to see if we may achieve an accuracy on par or surpassing the Logistic model. Ideally, with further accuracy from our models, we would be able to predict possible depression in students from a simple survey sent from a campus affiliated organization and could single out students that may need checking up on and provide further care such as study support or social work. Using multiple models with high accuracy on the survey data may catch more edge cases than just one accurate model. If we compared the results and found predictions matching from multiple models for a single student, then we would personally reach out. If there were one or two matches, then we may point them to further resources to seek help on their own volition. 
+
+Depression is a major issue for students and can affect the course of their lives due to the timing of it occurring in such an important transitional period of teenage years to adulthood and ones career. Being aware of possible factors that can have an affect on depression or might be indicators can help one get a head start on receiving treatment and mitigating a continuous spiral. Colleges and universities can make their students aware of warning signs and/or offer programs and opportunities for reducing stress that often occurs from rigorous classes and other factors. Through awareness, hopefully depression levels in students can decrease for the better.
+
+
+
+
+```{r, results='asis', echo=FALSE}
+cat("\\newpage")
+```
+
+# References
+
+Ibrahim, A.K., Kelly, S.J., Adams, C.E. and Glazebrook, C., 2013. A systematic review of studies of depression prevalence in university students. Journal of psychiatric research, 47(3), pp.391-400.
+
+Sarokhani, D., Delpisheh, A., Veisani, Y., Sarokhani, M.T., Esmaeli Manesh, R. and Sayehmiri, K., 2013. Prevalence of depression among university students: A systematic review and meta‐analysis study. Depression research and treatment, 2013(1), p.373857.
+
