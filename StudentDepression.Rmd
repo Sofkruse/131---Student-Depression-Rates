@@ -609,3 +609,4 @@ Ibrahim, A.K., Kelly, S.J., Adams, C.E. and Glazebrook, C., 2013. A systematic r
 
 Sarokhani, D., Delpisheh, A., Veisani, Y., Sarokhani, M.T., Esmaeli Manesh, R. and Sayehmiri, K., 2013. Prevalence of depression among university students: A systematic review and meta‐analysis study. Depression research and treatment, 2013(1), p.373857.
 
+Shodolamu Opeyemi. Student Depression Dataset. Kaggle, 2022, https://www.kaggle.com/datasets/hopesb/student-depression-dataset.
